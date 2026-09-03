@@ -48,14 +48,7 @@ function gvizRowsToArrays(payload){
   return rows.map(row=>Array.from({length:n},(_,i)=>{const cell=(row.c||[])[i];return cell?(cell.v!==undefined?cell.v:(cell.f!==undefined?cell.f:"")):"";}));
 }
 function fetchSheetRows(sheet){
-  const cfg={
-    "5C-18":"A6:BO706",
-    "5B-75":"A5:AX1000",
-    "4C-69":"A6:BI1000",
-    "4D-52":"A6:BG1000",
-    "6D-17":"A6:BN1000"
-  };
-  const range=cfg[sheet]||"A1:ZZ1000";
+  const range="A1:AZ1000";
   return new Promise((resolve,reject)=>{
     const cb="gs_cb_"+Date.now()+"_"+Math.random().toString(36).slice(2);
     const script=document.createElement("script");
@@ -93,12 +86,24 @@ const SHEET_MAP={
   "4D-52":{grid:1,sub:2,initial:3,iq:4,t1:5,t2:6,t3:7,last:8,pq:9,u:10,tsp:11,dol:12,kohe:13,bulk:14},
   "6D-17":{grid:2,sub:3,initial:4,iq:5,t1:6,t2:7,t3:8,last:9,pq:10,u:11,tsp:12,dol:13,kohe:14,bulk:15}
 };
+function headerText(v){return norm(v).toUpperCase().replace(/\s+/g," ")}
+function detectSheetStructure(raw,loc){
+  const fallback=SHEET_MAP[loc], rows=(raw||[]).slice(0,12);
+  const findExact=(text)=>{const target=headerText(text);for(let r=0;r<rows.length;r++)for(let c=0;c<(rows[r]||[]).length;c++)if(headerText(rows[r][c])===target)return {r,c};return null};
+  const sub=findExact("Subgrid"),grid=findExact("ID GRID"),iq=findExact("Initial Qlty"),t1=findExact("T1"),t2=findExact("T2"),t3=findExact("T3"),last=findExact("Last TPH");
+  const dataTph=findExact("DATA TPH");
+  const initial=dataTph?{r:dataTph.r,c:dataTph.c}:null;
+  const findStarts=(prefix)=>{const p=headerText(prefix);for(let r=0;r<rows.length;r++)for(let c=0;c<(rows[r]||[]).length;c++)if(headerText(rows[r][c]).startsWith(p))return {r,c};return null};
+  const u=findStarts("Urea"),tsp=findStarts("TSP"),dol=findStarts("Dolomit"),kohe=findStarts("Kohe"),bulk=findStarts("Bulking Agent"),prog=findStarts("Progress");
+  const m={grid:grid?.c??fallback.grid,sub:sub?.c??fallback.sub,initial:initial?.c??fallback.initial,iq:iq?.c??fallback.iq,t1:t1?.c??fallback.t1,t2:t2?.c??fallback.t2,t3:t3?.c??fallback.t3,last:last?.c??fallback.last,pq:prog?.c??fallback.pq,u:u?.c??fallback.u,tsp:tsp?.c??fallback.tsp,dol:dol?.c??fallback.dol,kohe:kohe?.c??fallback.kohe,bulk:bulk?.c??fallback.bulk};
+  const headerEnd=Math.max(sub?.r??0,grid?.r??0,iq?.r??0,t1?.r??0,t2?.r??0,t3?.r??0,last?.r??0,prog?.r??0,u?.r??0,tsp?.r??0,dol?.r??0,kohe?.r??0,bulk?.r??0);
+  return {m,headerEnd};
+}
 function makeRecords(raw,loc){
-  const m=SHEET_MAP[loc]; if(!m) throw new Error(`Konfigurasi sheet ${loc} tidak ditemukan.`);
-  const data=[];
-  for(const row of raw||[]){
-    const sub=norm(row[m.sub]), grid=norm(row[m.grid]);
-    if(!sub||sub.toLowerCase()==="data blank")continue;
+  const detected=detectSheetStructure(raw,loc),m=detected.m,data=[];
+  for(let ri=detected.headerEnd+1;ri<(raw||[]).length;ri++){
+    const row=raw[ri]||[],sub=norm(row[m.sub]),grid=norm(row[m.grid]);
+    if(!sub||sub.toLowerCase()==="data blank"||headerText(sub)==="subgrid")continue;
     const initial=num(row[m.initial]),t1=num(row[m.t1]),t2=num(row[m.t2]),t3=num(row[m.t3]),last=num(row[m.last]),iq=norm(row[m.iq]),pq=norm(row[m.pq]);
     if(initial===null&&t1===null&&t2===null&&t3===null&&last===null&&!iq&&!pq)continue;
     data.push({no:data.length+1,grid:grid||sub,subgrid:sub,initial,iq:iq||null,t1,t2,t3,last,pq:pq||null,urea:num(row[m.u]),tsp:num(row[m.tsp]),dolomit:num(row[m.dol]),kohe:num(row[m.kohe]),bulking:num(row[m.bulk])});
