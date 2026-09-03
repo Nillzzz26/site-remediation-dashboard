@@ -26,15 +26,19 @@ let st=[["T1",c.t1],["T2",c.t2],["T3",c.t3],["Last TPH",c.last],["Biostimulasi",
 $("extra").innerHTML=[["Bioaugmentasi",c.bioaugmentasi],["Initial TPC",c.tpc]].map(x=>`<div class="r"><span>${x[0]}</span><div class="bar"><i style="width:${pct(x[1],n)}%"></i></div><b>${x[1]}<br>${pct(x[1],n)}%</b></div>`).join("");renderTable(rows)}
 function renderTable(rows){let t=$("search").value.toLowerCase(),a=rows.filter(r=>!t||Object.values(r).some(v=>String(v??"").toLowerCase().includes(t)));$("body").innerHTML=a.map(r=>`<tr><td>${fmt(r.no)}</td><td><b>${fmt(r.grid)}</b></td><td>${fmt(r.subgrid)}</td><td>${fmt(r.initial)}</td><td>${badge(r.iq)}</td><td>${fmt(r.t1)}</td><td>${fmt(r.t2)}</td><td>${fmt(r.t3)}</td><td><b>${fmt(r.last)}</b></td><td>${badge(r.pq)}</td><td>${fmt(r.urea)}</td><td>${fmt(r.tsp)}</td><td>${fmt(r.dolomit)}</td><td>${fmt(r.kohe)}</td><td>${fmt(r.bulking)}</td></tr>`).join("")||'<tr><td colspan="15">Tidak ada data.</td></tr>'}
 $("loc").innerHTML=LOCS.map(x=>`<option>${x}</option>`).join("");$("loc").onchange=render;$("search").oninput=()=>renderTable(DB.data[$("loc").value]||[]);render();
-
 async function fetchSheetRows(sheet){
   const url=`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet)}`;
-  const res=await fetch(url,{cache:"no-store"});
-  if(!res.ok) throw new Error(`Gagal membaca sheet ${sheet}`);
+  const res=await fetch(url,{cache:"no-store",redirect:"follow"});
+  if(!res.ok) throw new Error(`HTTP ${res.status} saat membaca sheet ${sheet}`);
   const txt=await res.text();
-  return Papa.parse(txt,{skipEmptyLines:false}).data;
+  if(!txt || /Sign in|Google Drive|request access/i.test(txt.slice(0,500))) throw new Error(`Sheet ${sheet} tidak mengembalikan CSV publik.`);
+  if(typeof Papa==="undefined") throw new Error("Library CSV belum termuat.");
+  const parsed=Papa.parse(txt,{skipEmptyLines:false});
+  if(parsed.errors && parsed.errors.length) console.warn(`Peringatan parsing ${sheet}:`,parsed.errors.slice(0,3));
+  if(!parsed.data || !parsed.data.length) throw new Error(`Sheet ${sheet} kosong atau tidak terbaca.`);
+  return parsed.data;
 }
-function norm(v){return String(v??"").replace(/\\s+/g," ").trim();}
+function norm(v){return String(v??"").replace(/\s+/g," ").trim();}
 function num(v){if(v===null||v===undefined||norm(v)==="")return null;let s=norm(v).replace(/,/g,"");let n=Number(s);return Number.isFinite(n)?n:null}
 function flattenHeaders(raw){
   const h=[];
@@ -59,7 +63,7 @@ function makeRecords(raw){
   const iT2=findCol(headers,h=>h.includes("T2")&&h.includes("MONITOR"));
   const iT3=findCol(headers,h=>h.includes("T3")&&h.includes("MONITOR"));
   const iLast=findCol(headers,h=>h.includes("LAST TPH"));
-  const iProg=findCol(headers,h=>h=== "PROGRESS" || h.endsWith("| PROGRESS"));
+  const iProg=findCol(headers,h=>h==="PROGRESS"||h.endsWith("| PROGRESS"));
   const iU=findCol(headers,h=>h.includes("UREA"));
   const iTsp=findCol(headers,h=>h.includes("TSP"));
   const iDol=findCol(headers,h=>h.includes("DOLOMIT"));
@@ -70,52 +74,63 @@ function makeRecords(raw){
     const row=raw[r]||[];
     const sub=norm(row[iSub]);
     const grid=norm(row[iGrid]);
-    if(!sub || sub.toLowerCase()==="data blank") continue;
-    const initial=num(row[iInitial]);
-    const t1=num(row[iT1]),t2=num(row[iT2]),t3=num(row[iT3]);
-    const last=num(row[iLast]);
+    if(!sub||sub.toLowerCase()==="data blank") continue;
+    const initial=num(row[iInitial]),t1=num(row[iT1]),t2=num(row[iT2]),t3=num(row[iT3]),last=num(row[iLast]);
     const iq=norm(row[iIQ]),pq=norm(row[iProg]);
-    if(initial===null && t1===null && t2===null && t3===null && last===null && !iq && !pq) continue;
+    if(initial===null&&t1===null&&t2===null&&t3===null&&last===null&&!iq&&!pq) continue;
     data.push({no:data.length+1,grid:grid||sub,subgrid:sub,initial,iq:iq||null,t1,t2,t3,last,pq:pq||null,urea:num(row[iU]),tsp:num(row[iTsp]),dolomit:num(row[iDol]),kohe:num(row[iK]),bulking:num(row[iB])});
   }
   return data;
 }
 function findRekapValue(raw,label,loc){
-  const target=norm(label).toUpperCase(), rows=raw||[];
+  const target=norm(label).toUpperCase(),rows=raw||[];
   for(const row of rows){
-    const cells=row.map(norm);
-    const pos=cells.findIndex(x=>x.toUpperCase()===target);
+    const cells=row.map(norm),pos=cells.findIndex(x=>x.toUpperCase()===target);
     if(pos>=0){
-      // Try exact location header position first; otherwise search by known location order.
       const hdr=rows.findIndex(rr=>rr.some(x=>norm(x).toUpperCase()===loc.toUpperCase()));
-      if(hdr>=0){ const col=rows[hdr].findIndex(x=>norm(x).toUpperCase()===loc.toUpperCase()); const v=num(row[col]); if(v!==null)return v; }
+      if(hdr>=0){const col=rows[hdr].findIndex(x=>norm(x).toUpperCase()===loc.toUpperCase());const v=num(row[col]);if(v!==null)return v;}
       for(let j=pos+1;j<cells.length;j++){const v=num(cells[j]);if(v!==null)return v;}
     }
   }
   return null;
 }
 function buildMetaFromRecords(loc,rows,rekap){
-  const total=findRekapValue(rekap,"JUMLAH GRID",loc) ?? rows.length;
-  const initial=findRekapValue(rekap,"INISIAL TPH",loc) ?? rows.filter(r=>r.initial!==null).length;
-  const bio=findRekapValue(rekap,"BIOSTIMULASI",loc) ?? rows.filter(r=>[r.urea,r.tsp,r.dolomit,r.kohe,r.bulking].some(v=>v!==null)).length;
-  const bioaug=findRekapValue(rekap,"BIOAUGMENTASI",loc) ?? 0;
-  const tpc=findRekapValue(rekap,"INISIAL TPC",loc) ?? 0;
+  const total=findRekapValue(rekap,"JUMLAH GRID",loc)??rows.length;
+  const initial=findRekapValue(rekap,"INISIAL TPH",loc)??rows.filter(r=>r.initial!==null).length;
+  const bio=findRekapValue(rekap,"BIOSTIMULASI",loc)??rows.filter(r=>[r.urea,r.tsp,r.dolomit,r.kohe,r.bulking].some(v=>v!==null)).length;
+  const bioaug=findRekapValue(rekap,"BIOAUGMENTASI",loc)??0;
+  const tpc=findRekapValue(rekap,"INISIAL TPC",loc)??0;
   const countNonEmpty=k=>rows.filter(r=>r[k]!==null).length;
   const materials={Urea:rows.reduce((s,r)=>s+(r.urea||0),0),TSP:rows.reduce((s,r)=>s+(r.tsp||0),0),Dolomit:rows.reduce((s,r)=>s+(r.dolomit||0),0),Kohe:rows.reduce((s,r)=>s+(r.kohe||0),0),"Bulking Agent":rows.reduce((s,r)=>s+(r.bulking||0),0)};
-  const iq={},pq={}; rows.forEach(r=>{if(r.iq&&/TKA|TKB|TKC/i.test(r.iq)){const k=r.iq.toUpperCase().match(/TK[ABC]/)?.[0];if(k)iq[k]=(iq[k]||0)+1} if(r.pq&&/TKA|TKB|TKC/i.test(r.pq)){const k=r.pq.toUpperCase().match(/TK[ABC]/)?.[0];if(k)pq[k]=(pq[k]||0)+1}});
+  const iq={},pq={};
+  rows.forEach(r=>{
+    if(r.iq&&/TKA|TKB|TKC/i.test(r.iq)){const k=r.iq.toUpperCase().match(/TK[ABC]/)?.[0];if(k)iq[k]=(iq[k]||0)+1}
+    if(r.pq&&/TKA|TKB|TKC/i.test(r.pq)){const k=r.pq.toUpperCase().match(/TK[ABC]/)?.[0];if(k)pq[k]=(pq[k]||0)+1}
+  });
   return {total,counts:{total,initial,bio_any:bio,bioaugmentasi:bioaug,tpc,t1:countNonEmpty("t1"),t2:countNonEmpty("t2"),t3:countNonEmpty("t3"),last:initial,bio_urea:countNonEmpty("urea"),bio_tsp:countNonEmpty("tsp"),bio_dolomit:countNonEmpty("dolomit"),bio_kohe:countNonEmpty("kohe"),bio_bulking_agent:countNonEmpty("bulking")},iq,pq,materials};
 }
-async function updateFromGoogle(){
-  const status=$("syncStatus"),btn=$("refreshBtn"); btn.disabled=true; btn.style.opacity=.6; status.textContent="⏳ Membaca Google Sheets...";
+async function updateFromGoogle(showAlert=true){
+  const status=$("syncStatus"),btn=$("refreshBtn");
+  btn.disabled=true;btn.style.opacity=.6;status.textContent="⏳ Membaca Google Sheets...";
   try{
-    const rekap=await fetchSheetRows(REKAP_SHEET), fresh={data:{},meta:{}};
-    for(const loc of SHEETS){const raw=await fetchSheetRows(loc); const rows=makeRecords(raw); fresh.data[loc]=rows; fresh.meta[loc]=buildMetaFromRecords(loc,rows,rekap);}
-    DB.data=fresh.data; DB.meta=fresh.meta; LOCS.splice(0,LOCS.length,...SHEETS);
-    $("loc").innerHTML=LOCS.map(x=>`<option>${x}</option>`).join(""); render();
+    const rekap=await fetchSheetRows(REKAP_SHEET),fresh={data:{},meta:{}};
+    for(const loc of SHEETS){
+      const raw=await fetchSheetRows(loc),rows=makeRecords(raw);
+      if(!rows.length) console.warn(`Tidak ada baris data terdeteksi pada ${loc}`);
+      fresh.data[loc]=rows;fresh.meta[loc]=buildMetaFromRecords(loc,rows,rekap);
+    }
+    DB.data=fresh.data;DB.meta=fresh.meta;LOCS.splice(0,LOCS.length,...SHEETS);
+    $("loc").innerHTML=LOCS.map(x=>`<option>${x}</option>`).join("");
+    render();
     status.textContent="✅ Data Google Sheets berhasil diperbarui • "+new Date().toLocaleString("id-ID");
-  }catch(e){console.error(e);status.textContent="⚠️ Gagal mengambil data. Data terakhir tetap digunakan.";alert("Dashboard belum dapat membaca Google Sheets. Pastikan akses spreadsheet dapat dibuka tanpa login.\n\n"+e.message);}
-  finally{btn.disabled=false;btn.style.opacity=1;}
+  }catch(e){
+    console.error("Update Google Sheets gagal:",e);
+    status.textContent="⚠️ Gagal mengambil data. Data terakhir tetap digunakan.";
+    if(showAlert) alert("Dashboard belum dapat membaca Google Sheets.\n\n"+e.message+"\n\nPastikan spreadsheet dapat dibuka tanpa login dan setiap nama sheet sesuai.");
+  }finally{btn.disabled=false;btn.style.opacity=1;}
 }
-$("refreshBtn").onclick=updateFromGoogle;
-setTimeout(updateFromGoogle,300);
+$("refreshBtn").onclick=()=>updateFromGoogle(true);
+// Tampilkan data bawaan terlebih dahulu, lalu coba sinkron otomatis.
+setTimeout(()=>updateFromGoogle(false),800);
+
 </script></body></html>
