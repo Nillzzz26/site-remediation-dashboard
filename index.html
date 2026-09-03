@@ -53,7 +53,7 @@ function render(){
   renderTable(rows);
 }
 function renderTable(rows){const t=$("search").value.toLowerCase();const a=rows.filter(r=>!t||Object.values(r).some(v=>String(v??"").toLowerCase().includes(t)));$("body").innerHTML=a.map(r=>`<tr><td>${fmt(r.no)}</td><td><b>${fmt(r.grid)}</b></td><td>${fmt(r.subgrid)}</td><td>${fmt(r.initial)}</td><td>${badge(r.iq)}</td><td>${fmt(r.t1)}</td><td>${fmt(r.t2)}</td><td>${fmt(r.t3)}</td><td><b>${fmt(r.last)}</b></td><td>${badge(r.pq)}</td><td>${fmt(r.urea)}</td><td>${fmt(r.tsp)}</td><td>${fmt(r.dolomit)}</td><td>${fmt(r.kohe)}</td><td>${fmt(r.bulking)}</td></tr>`).join("")||'<tr><td colspan="15">Tidak ada data.</td></tr>'}
-$("loc").innerHTML=LOCS.map(x=>`<option>${x}</option>`).join("");$("loc").onchange=render;$("search").oninput=()=>renderTable(DB.data[$("loc").value]||[]);render();
+$("loc").innerHTML=LOCS.map(x=>`<option>${x}</option>`).join("");$("loc").onchange=render;$("search").oninput=()=>renderTable(DB.data[$("loc").value]||[]);
 
 function gvizRowsToArrays(payload){
   if(!payload||!payload.table) throw new Error("Format respons Google Sheets tidak dikenali");
@@ -196,14 +196,18 @@ function buildMetaFromRecords(loc,rows,rekap,officialMonitoring,raw){
   const iq={},pq={}; rows.forEach(r=>{const ik=String(r.iq||"").toUpperCase().match(/TK[ABC]/)?.[0];if(ik)iq[ik]=(iq[ik]||0)+1;const pk=String(r.pq||"").toUpperCase().match(/TK[ABC]/)?.[0];if(pk)pq[pk]=(pq[pk]||0)+1});
   return {total,counts:{total,initial,bio_any:bio,bioaugmentasi:bioaug,tpc,t1:monitoring.t1,t2:monitoring.t2,t3:monitoring.t3,last:monitoring.last,bio_urea:materialCounts.urea??0,bio_tsp:materialCounts.tsp??0,bio_dolomit:materialCounts.dolomit??0,bio_kohe:materialCounts.kohe??0,bio_bulking_agent:materialCounts.bulking??0},iq,pq,materials};
 }
-async function updateFromGoogle(){
+async function updateFromGoogle(silent=false){
+  const selectedLoc=$("loc").value;
   const status=$("syncStatus"),btn=$("refreshBtn");btn.disabled=true;btn.style.opacity=.6;status.textContent="⏳ Membaca Google Sheets...";
   try{
     const rekap=parseRekap(await fetchRekap()),fresh={data:{},meta:{}};
     for(const loc of SHEETS){const raw=await fetchSheetRows(loc);const rows=makeRecords(raw,loc);if(!rows.length)throw new Error(`Sheet ${loc} terbaca tetapi tidak ada baris data yang dapat diproses.`);fresh.data[loc]=rows;fresh.meta[loc]=buildMetaFromRecords(loc,rows,rekap,getOfficialMonitoringTotals(raw,SHEET_MAP[loc],rekap?.["JUMLAH GRID"]?.[loc],rekap?.["INISIAL TPH"]?.[loc]),raw)}
-    DB.data=fresh.data;DB.meta=fresh.meta;LOCS.splice(0,LOCS.length,...SHEETS);$("loc").innerHTML=LOCS.map(x=>`<option>${x}</option>`).join("");render();status.textContent="✅ Data Google Sheets berhasil diperbarui • "+new Date().toLocaleString("id-ID");
-  }catch(e){console.error(e);status.textContent="⚠️ Gagal mengambil data: "+e.message;alert("Dashboard belum dapat membaca Google Sheets.\n\nDetail: "+e.message+"\n\nPeriksa link spreadsheet dan nama sheet.")}
+    DB.data=fresh.data;DB.meta=fresh.meta;LOCS.splice(0,LOCS.length,...SHEETS);$("loc").innerHTML=LOCS.map(x=>`<option>${x}</option>`).join("");if(LOCS.includes(selectedLoc))$("loc").value=selectedLoc;render();status.textContent="✅ Data Google Sheets berhasil diperbarui • "+new Date().toLocaleString("id-ID");
+  }catch(e){console.error(e);status.textContent="⚠️ Gagal mengambil data: "+e.message;if(!silent)alert("Dashboard belum dapat membaca Google Sheets.\n\nDetail: "+e.message+"\n\nPeriksa link spreadsheet dan nama sheet.")}
   finally{btn.disabled=false;btn.style.opacity=1}
 }
-$("refreshBtn").onclick=updateFromGoogle;
+$("refreshBtn").onclick=()=>updateFromGoogle(false);
+// Sinkronisasi otomatis saat dashboard dibuka agar tampilan awal sama dengan hasil tombol Update Data.
+// Jika koneksi gagal, data embedded tetap ditampilkan tanpa pop-up.
+window.addEventListener("load",()=>updateFromGoogle(true));
 </script></body></html>
