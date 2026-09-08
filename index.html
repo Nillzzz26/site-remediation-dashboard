@@ -47,12 +47,23 @@ function render(){
   // Untuk 4D-52 gunakan hasil perhitungan langsung dari kolom INITIAL/LAST
   // agar seluruh 191 subgrid tetap terhitung, tanpa bergantung pada parsing
   // teks formula Google Sheets.
-  const q=DB.quality?.[loc]?.initial || qualityCount(rows,"iq");
-  const p=DB.quality?.[loc]?.progress || qualityCount(rows,"pq");
+  // Quality TPH dihitung hanya dari grid yang benar-benar memiliki data TPH.
+  // KHUSUS 6D-17 terdapat 6 baris subgrid tambahan (79B, 80B, 85B, 116B,
+  // 118B, 137B) yang memiliki Progress Qlty=TKC tetapi tidak memiliki Initial
+  // TPH/Last TPH. Baris tersebut bukan bagian dari 227 grid resmi, sehingga
+  // tidak boleh ikut menambah jumlah Quality.
+  const qualityRows=loc==="6D-17"
+    ? rows.filter(r=>r.initial!==null && r.initial!==undefined && String(r.initial).trim()!=="")
+    : rows;
+  const qualityTotal=qualityRows.length;
+  const q=DB.quality?.[loc]?.initial || qualityCount(qualityRows,"iq");
+  const p=loc==="6D-17"
+    ? qualityCount(qualityRows,"pq")
+    : (DB.quality?.[loc]?.progress || qualityCount(qualityRows,"pq"));
   const qLabels=["TKA","TKB","TKC"],qValues=qLabels.map(k=>q[k]),pValues=qLabels.map(k=>p[k]);
   chart("qualInitial","doughnut",qLabels,qValues);
   chart("qualProgress","doughnut",qLabels,pValues);
-  function list(id,o){$(id).innerHTML=Object.entries(o).map(([k,v])=>`<div class="r"><span>${badge(k)}</span><div class="bar"><i style="width:${pct(v,n)}%"></i></div><b>${v}</b></div>`).join("")||"Tidak ada data"}
+  function list(id,o){$(id).innerHTML=Object.entries(o).map(([k,v])=>`<div class="r"><span>${badge(k)}</span><div class="bar"><i style="width:${pct(v,qualityTotal)}%"></i></div><b>${v}</b></div>`).join("")||"Tidak ada data"}
   list("iq",q);list("pq",p);
   const b=[["Urea",c.bio_urea],["TSP",c.bio_tsp],["Dolomit",c.bio_dolomit],["Kohe",c.bio_kohe],["Bulking Agent",c.bio_bulking_agent]];
   $("biostats").innerHTML=b.map(x=>`<div class="bioitem"><b>${x[1]}</b><span>${x[0]}<br>${pct(x[1],n)}%</span></div>`).join("");
