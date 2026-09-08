@@ -258,19 +258,23 @@ function getOfficialMonitoringTotals(raw,m,total,initial){
   };
 }
 function qualityFromRaw(raw,loc){
-  const detected=detectSheetStructure(raw,loc),m=detected.m,out={initial:{TKA:0,TKB:0,TKC:0},progress:{TKA:0,TKB:0,TKC:0}};
-  const classify=v=>{
-    const n=num(v);
-    if(n===null) return null;
-    return n<0.1?"TKC":(n<=3?"TKB":"TKA");
+  const detected=detectSheetStructure(raw,loc),m=detected.m,out={initial:{TKA:0, TKB:0, TKC:0},progress:{TKA:0, TKB:0, TKC:0}};
+  const normalizeQualityValue=v=>{
+    const s=String(v??"").toUpperCase().replace(/[^A-Z]/g,"");
+    const hit=s.match(/TK[ABC]/);
+    return hit?hit[0]:null;
   };
   for(let ri=detected.headerEnd+1;ri<(raw||[]).length;ri++){
-    const row=raw[ri]||[], text=row.map(norm).filter(Boolean).join(" ").toUpperCase();
+    const row=raw[ri]||[];
+    const text=row.map(norm).filter(Boolean).join(" ").toUpperCase();
     if(/\bTOTAL\b|DATA\s*BLANK|DATABLANK/.test(text)) continue;
-    const initial=num(row[m.initial]), last=num(row[m.last]);
-    // Baris ringkasan 4D-52 dapat berisi 191 pada kolom INITIAL/LAST.
-    if(initial!==null && initial>=50 && last!==null && last>=50) continue;
-    const iq=classify(initial), pq=classify(last);
+    // Quality mengikuti langsung kolom Initial Qlty dan Progress Qlty.
+    // Jangan klasifikasikan ulang dari angka INITIAL/LAST karena footer atau
+    // baris blank dapat berisi angka 0/2/191 dan membuat total bertambah.
+    const grid=norm(row[m.grid]), sub=norm(row[m.sub]);
+    if(!grid && !sub) continue;
+    const iq=normalizeQualityValue(row[m.iq]);
+    const pq=normalizeQualityValue(row[m.pq]);
     if(iq) out.initial[iq]++;
     if(pq) out.progress[pq]++;
   }
