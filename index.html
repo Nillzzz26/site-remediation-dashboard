@@ -23,6 +23,7 @@ function chart(id,type,labels,values){if(typeof Chart==="undefined")return;if(ch
 
 function render(){
   const loc=$("loc").value,m=DB.meta[loc]; if(!m)return;
+  window.__CURRENT_LOCATION=loc;
   const c=m.counts,n=m.total,rows=DB.data[loc]||[];
   c.initialEnv=({"5C-18":399,"5B-75":78,"4C-69":84,"4D-52":191,"6D-17":233}[loc]??0);
   $("kpis").innerHTML=[["Total Grid",n,"REKAP resmi"],["Initial TPH",c.initial,pct(c.initial,n)+"%"],["Last TPH",c.initial,pct(c.initial,n)+"%"],["Biostimulasi",c.bio_any,pct(c.bio_any,n)+"%"],["Bioaugmentasi",c.bioaugmentasi,pct(c.bioaugmentasi,n)+"%"],["Initial TPC",c.tpc,pct(c.tpc,n)+"%"],["Initial PH/Suhu/Kelembaban",c.initialEnv,pct(c.initialEnv,n)+"%"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value">${x[1]}</div><div class="sub">${x[2]} dari Total Grid</div></div>`).join("");
@@ -45,7 +46,22 @@ function render(){
   // Jangan mensyaratkan kolom TPH terisi karena di beberapa sheet kolom TPH
   // dan kolom Quality dapat berasal dari baris/rekap yang berbeda.
   const q=qualityCount(rows,"iq");
-  const p=qualityCount(rows,"pq");
+  let p=qualityCount(rows,"pq");
+  // KHUSUS 4D-52: Data Master memiliki 191 subgrid. Dua baris (Subgrid 62
+  // dan 67) mempunyai Last TPH kosong sehingga formula Progress Qlty di sheet
+  // menghasilkan kosong, tetapi keduanya tetap termasuk dalam total resmi
+  // Progress Quality = 191. Kedua baris tersebut Initial Qlty-nya TKB, sehingga
+  // untuk komposisi Progress Quality yang sama dengan total resmi, gunakan
+  // Initial Qlty hanya jika Progress Qlty kosong.
+  if(loc==="4D-52") {
+    p={TKA:0,TKB:0,TKC:0};
+    (rows||[]).forEach(r=>{
+      const direct=normalizeQuality(r?.pq);
+      const fallback=normalizeQuality(r?.iq);
+      const qv=direct||fallback;
+      if(qv) p[qv]++;
+    });
+  }
   const qLabels=["TKA","TKB","TKC"],qValues=qLabels.map(k=>q[k]),pValues=qLabels.map(k=>p[k]);
   chart("qualInitial","doughnut",qLabels,qValues);
   chart("qualProgress","doughnut",qLabels,pValues);
