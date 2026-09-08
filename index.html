@@ -4,7 +4,7 @@
 <body><header><h1>Dashboard Site Remediation</h1><p>Monitoring TPH • Initial PH/Suhu/Kelembaban • Biostimulasi • Bioaugmentasi • TPC • Quality</p></header><div class="wrap">
 <div class="controls"><b>Pilih Lokasi:</b><select id="loc"></select><input id="search" placeholder="Cari ID Grid, Subgrid, TKA, TKB, atau TKC..."><button id="refreshBtn" style="border:0;border-radius:10px;padding:10px 14px;background:#12385e;color:#fff;font-weight:700;cursor:pointer">🔄 Update Data</button><span id="syncStatus" style="font-size:13px;color:#52606d">Menggunakan data dashboard</span></div><div id="kpis" class="grid kpis"></div><section class="card drone-card"><h2>Foto Udara Lokasi</h2><p class="desc">Perbandingan kondisi lokasi <b>sebelum pemulihan</b> dan <b>saat pemulihan</b> berdasarkan data pada sheet <b>FOTO DRONE</b>.</p><div class="drone-grid"><div class="drone-panel"><h3>SEBELUM PEMULIHAN</h3><div id="droneBefore"></div></div><div class="drone-panel"><h3>SAAT PEMULIHAN</h3><div id="droneAfter"></div></div></div></section>
 <div class="grid two" style="margin-top:16px"><section class="card"><h2>Monitoring TPH — T1, T2, T3 & Last TPH</h2><p class="desc"><b>T1, T2, T3, dan Last TPH</b> mengikuti angka rekap resmi pada Data Master untuk lokasi yang dipilih.</p><div class="chart"><canvas id="tph"></canvas></div><div id="stats" class="stats"></div></section>
-<section class="card quality-card"><h2>Quality TPH — Initial vs Progress</h2><p class="desc">Diagram menunjukkan <b>komposisi kualitas TPH</b> berdasarkan status <b>TKA, TKB, dan TKC</b>. Diagram kiri menggunakan data <b>Initial TPH</b>, sedangkan diagram kanan menggunakan data <b>Progress TPH</b>.</p><div class="quality-charts"><div class="quality-panel"><h3>Initial TPH — Quality</h3><p class="quality-explain">Menampilkan jumlah grid yang memiliki <b>Initial TPH</b> dan masing-masing status kualitas awalnya.</p><div class="quality-chart"><canvas id="qualInitial"></canvas></div><div id="iq" class="list"></div></div><div class="quality-panel"><h3>Progress TPH — Quality</h3><p class="quality-explain">Menampilkan jumlah grid berdasarkan Progress Qlty; pada 4D-52, grid yang Progress Qlty-nya kosong menggunakan Initial Qlty sebagai fallback.</p><div class="quality-chart"><canvas id="qualProgress"></canvas></div><div id="pq" class="list"></div></div></div></section></div>
+<section class="card quality-card"><h2>Quality TPH — Initial vs Progress</h2><p class="desc">Diagram menunjukkan <b>komposisi kualitas TPH</b> berdasarkan status <b>TKA, TKB, dan TKC</b>. Diagram kiri menggunakan kolom <b>Initial Qlty</b>, sedangkan diagram kanan menggunakan kolom <b>Progress Qlty</b> dari Data Master.</p><div class="quality-charts"><div class="quality-panel"><h3>Initial TPH — Quality</h3><p class="quality-explain">Menampilkan jumlah grid berdasarkan kolom <b>Initial Qlty</b> pada Data Master.</p><div class="quality-chart"><canvas id="qualInitial"></canvas></div><div id="iq" class="list"></div></div><div class="quality-panel"><h3>Progress TPH — Quality</h3><p class="quality-explain">Menampilkan jumlah grid berdasarkan kolom <b>Progress Qlty</b> pada Data Master.</p><div class="quality-chart"><canvas id="qualProgress"></canvas></div><div id="pq" class="list"></div></div></div></section></div>
 <section class="card" style="margin-top:16px"><h2>Biostimulasi — Rekap & Material</h2><p class="desc">Jumlah Biostimulasi utama mengikuti angka resmi sheet <b>REKAP</b>. Rincian Urea, TSP, Dolomit, Kohe, dan Bulking Agent menunjukkan jumlah data yang terisi pada masing-masing field.</p><div id="biostats" class="bio-grid"></div><div class="chart" style="height:280px"><canvas id="mat"></canvas></div><div id="mt" class="note"></div></section>
 <div class="grid two" style="margin-top:16px"><section class="card"><h2>Progress Tahapan</h2><p class="desc">Persentase dibandingkan dengan Total Grid resmi pada REKAP.</p><div id="stages" class="list"></div></section><section class="card"><h2>Progress Biostimulasi &amp; Bioaugmentasi</h2><p class="desc">Persentase pelaksanaan Biostimulasi dan Bioaugmentasi dibandingkan dengan Total Grid.</p><div id="extra" class="list"></div></section></div>
 <section class="card" style="margin-top:16px"><h2>Parameter Initial TPC &amp; Soil</h2><p class="desc">Persentase data Initial TPC dan Initial pH/Suhu/Kelembaban dibandingkan dengan Total Grid.</p><div id="initialSoil" class="list"></div></section>
@@ -29,38 +29,23 @@ function render(){
   const s=[["T1",c.t1],["T2",c.t2],["T3",c.t3],["Last TPH",c.last]];
   $("stats").innerHTML=s.map(x=>`<div class="stat"><b>${x[1]}</b><span>${x[0]}<br>${pct(x[1],n)}%</span></div>`).join("");chart("tph","bar",s.map(x=>x[0]),s.map(x=>x[1]));
   // Quality TPH: hanya TKA/TKB/TKC dan hanya dihitung pada baris yang benar-benar memiliki TPH.
-  const qualityCount=(rows, valueKey, qualityKey)=>{
-    const out={TKA:0,TKB:0,TKC:0};
-    rows.forEach(r=>{
-      const tph=r[valueKey];
-      const q=String(r[qualityKey]||"").toUpperCase().match(/TK[ABC]/)?.[0];
-      if(tph!==null && tph!==undefined && String(tph).trim()!=="" && q) out[q]++;
-    });
-    return out;
+  const normalizeQuality=(v)=>{
+    const s=String(v??"").toUpperCase().replace(/[^A-Z]/g,"");
+    return /TK[ABC]/.test(s) ? s.match(/TK[ABC]/)?.[0] : null;
   };
-  // Quality selalu dihitung dari record data yang valid, bukan dari baris TOTAL.
-  // Initial Quality wajib memakai status pada kolom Initial Qlty.
-  // Progress Quality memakai Progress Qlty; bila status progress kosong pada
-  // suatu grid 4D-52, gunakan Initial Qlty sebagai fallback agar seluruh grid
-  // tetap terwakili dan totalnya sama dengan jumlah Initial Quality.
-  const q=qualityCount(rows,"initial","iq");
-  const progressRows=rows.map(r=>{
-    if(loc==="4D-52" && !/^TK[ABC]$/i.test(String(r.pq||"")) && /^TK[ABC]$/i.test(String(r.iq||""))){
-      return {...r,pq:r.iq,__qualityFallback:true};
-    }
-    return r;
-  });
-  // Untuk 4D-52 terdapat 2 grid yang Initial Qlty-nya terisi tetapi Progress Qlty
-  // masih kosong. Sesuai kebutuhan dashboard, kedua grid tersebut tetap masuk
-  // total Quality (191) dengan status Initial Qlty sebagai fallback.
-  const p=loc==="4D-52" ? (()=>{
+  const qualityCount=(rows, qualityKey)=>{
     const out={TKA:0,TKB:0,TKC:0};
-    progressRows.forEach(r=>{
-      const q=String(r.pq||"").toUpperCase().match(/\bTK[ABC]\b/)?.[0];
+    (rows||[]).forEach(r=>{
+      const q=normalizeQuality(r?.[qualityKey]);
       if(q) out[q]++;
     });
     return out;
-  })() : qualityCount(progressRows,"last","pq");
+  };
+  // QUALITY TPH mengikuti kolom kualitas di Data Master secara langsung.
+  // Jangan mensyaratkan kolom TPH terisi karena di beberapa sheet kolom TPH
+  // dan kolom Quality dapat berasal dari baris/rekap yang berbeda.
+  const q=qualityCount(rows,"iq");
+  const p=qualityCount(rows,"pq");
   const qLabels=["TKA","TKB","TKC"],qValues=qLabels.map(k=>q[k]),pValues=qLabels.map(k=>p[k]);
   chart("qualInitial","doughnut",qLabels,qValues);
   chart("qualProgress","doughnut",qLabels,pValues);
@@ -283,17 +268,22 @@ function makeRecords(raw,loc){
     // misalnya baris TOTAL berisi angka 191 pada kolom Initial Qlty dan 189
     // pada Progress Qlty, sedangkan baris data blank berisi angka 0/2.
     // Nilai kualitas data yang sah hanya TKA/TKB/TKC.
-    const iqValid=/^TK[ABC]$/i.test(iq), pqValid=/^TK[ABC]$/i.test(pq);
+    const normalizeQualityValue=v=>{const s=String(v??"").toUpperCase().replace(/[^A-Z]/g,"");return /TK[ABC]/.test(s)?s.match(/TK[ABC]/)?.[0]:null};
+    const iqValid=!!normalizeQualityValue(iq), pqValid=!!normalizeQualityValue(pq);
     const isSummaryRow = !iqValid && !pqValid &&
       (headerText(row[0])==="TOTAL" || /DATA\s*BLANK|DATABLANK/.test(rowText) ||
        (num(row[m.initial])!==null && num(row[m.iq])!==null && num(row[m.pq])!==null &&
         num(row[m.initial])>=50 && num(row[m.iq])>=50));
     if(isSummaryRow)continue;
     if(initial===null&&t1===null&&t2===null&&t3===null&&last===null&&!iq&&!pq)continue;
-    // Hindari duplikasi akibat baris/kolom hasil merged cell. Gunakan pasangan Grid + Subgrid.
+    // Hanya lakukan deduplikasi jika Grid DAN Subgrid benar-benar terisi.
+    // Baris dengan Grid/Subgrid kosong tetap dipertahankan karena pada beberapa
+    // sheet (termasuk 4D-52) kualitas TPH berada di baris lanjutan/merged-cell.
     const key=headerText(grid||"")+"||"+headerText(sub);
-    if(seen.has(key)) continue;
-    seen.add(key);
+    if(grid && sub){
+      if(seen.has(key)) continue;
+      seen.add(key);
+    }
     data.push({no:data.length+1,grid:grid||sub,subgrid:sub,initial,iq:iq||null,t1,t2,t3,last,pq:pq||null,urea:num(row[m.u]),tsp:num(row[m.tsp]),dolomit:num(row[m.dol]),kohe:num(row[m.kohe]),bulking:num(row[m.bulk])});
   }
   return data;
