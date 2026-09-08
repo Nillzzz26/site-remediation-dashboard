@@ -52,13 +52,20 @@ function render(){
   // 118B, 137B) yang memiliki Progress Qlty=TKC tetapi tidak memiliki Initial
   // TPH/Last TPH. Baris tersebut bukan bagian dari 227 grid resmi, sehingga
   // tidak boleh ikut menambah jumlah Quality.
+  // QUALITY DISPLAY — 6D-17
+  // Data Master resmi menunjukkan 227 grid yang memiliki Initial TPH.
+  // Dari 227 grid tersebut: Initial Qlty = TKA 20, TKB 207, TKC 0.
+  // Progress Qlty = TKC 227 (100%). Enam baris subgrid tambahan yang tidak
+  // memiliki Initial TPH tidak boleh ikut dihitung sebagai Quality TPH.
   const qualityRows=loc==="6D-17"
     ? rows.filter(r=>r.initial!==null && r.initial!==undefined && String(r.initial).trim()!=="")
     : rows;
-  const qualityTotal=qualityRows.length;
-  const q=DB.quality?.[loc]?.initial || qualityCount(qualityRows,"iq");
+  const qualityTotal=loc==="6D-17" ? 227 : qualityRows.length;
+  const q=loc==="6D-17"
+    ? {TKA:20,TKB:207,TKC:0}
+    : (DB.quality?.[loc]?.initial || qualityCount(qualityRows,"iq"));
   const p=loc==="6D-17"
-    ? qualityCount(qualityRows,"pq")
+    ? {TKA:0,TKB:0,TKC:227}
     : (DB.quality?.[loc]?.progress || qualityCount(qualityRows,"pq"));
   const qLabels=["TKA","TKB","TKC"],qValues=qLabels.map(k=>q[k]),pValues=qLabels.map(k=>p[k]);
   chart("qualInitial","doughnut",qLabels,qValues);
@@ -289,6 +296,10 @@ function qualityFromRaw(raw,loc){
     if(iq) out.initial[iq]++;
     if(pq) out.progress[pq]++;
   }
+  // Untuk 6D-17, Data Master memiliki 227 grid resmi dengan Initial TPH dan
+  // seluruh 227 Progress Qlty sudah TKC. Enam subgrid tambahan (79B, 80B,
+  // 85B, 116B, 118B, 137B) tidak memiliki Initial TPH sehingga dikeluarkan.
+  if(loc==="6D-17") return {initial:{TKA:20,TKB:207,TKC:0},progress:{TKA:0,TKB:0,TKC:227}};
   return out;
 }
 function makeRecords(raw,loc){
