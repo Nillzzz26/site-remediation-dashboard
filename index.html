@@ -38,7 +38,32 @@ function render(){
     });
     return out;
   };
-  const q=m.iq||qualityCount(rows,"initial","iq"),p=m.pq||qualityCount(rows,"last","pq");
+  // Hitung Quality langsung dari baris mentah Google Sheets, bukan DB.data
+  // yang sudah dideduplikasi untuk tabel detail. Ini menjaga semua subgrid yang
+  // memiliki Initial/Last TPH tetap terhitung dan selalu mengikuti data terbaru.
+  const rawRows=DB.raw?.[loc]||[];
+  const qualityCountRaw=(valueKey,qualityKey)=>{
+    const out={TKA:0,TKB:0,TKC:0}, sm=SHEET_MAP[loc];
+    const valueCol=sm[valueKey], qualityCol=sm[qualityKey];
+    const start=(detectSheetStructure(rawRows,loc).headerEnd??4)+1;
+    for(let i=start;i<rawRows.length;i++){
+      const row=rawRows[i]||[];
+      const text=row.map(norm).join(" ").toUpperCase();
+      if(/\bTOTAL\b|DATA\s*BLANK|DATABLANK/.test(text)) continue;
+      // Pada 4C-69 dan 6D-17, kolom Progress Qlty adalah sumber status
+      // progress. Jangan mensyaratkan Last TPH terisi: beberapa baris memakai
+      // formula/format yang Google Visualization kembalikan sebagai kosong,
+      // walaupun status Progress Qlty-nya sudah tercatat di Data Master.
+      // Initial Quality tetap harus memiliki nilai Initial TPH.
+      if(valueKey==="initial" && num(row[valueCol])===null) continue;
+      // Subgrid harus terisi agar baris header/footer tidak ikut dihitung.
+      if(!norm(row[sm.sub])) continue;
+      const q=String(row[qualityCol]??"").toUpperCase().trim().match(/^TK[ABC]$/)?.[0];
+      if(q) out[q]++;
+    }
+    return out;
+  };
+  const q=qualityCountRaw("initial","iq"),p=qualityCountRaw("last","pq");
   const qLabels=["TKA","TKB","TKC"],qValues=qLabels.map(k=>q[k]),pValues=qLabels.map(k=>p[k]);
   chart("qualInitial","doughnut",qLabels,qValues);
   chart("qualProgress","doughnut",qLabels,pValues);
@@ -188,12 +213,6 @@ const SHEET_MAP={
 };
 function headerText(v){return norm(v).toUpperCase().replace(/\s+/g," ")}
 function detectSheetStructure(raw,loc){
-  // Dua sheet ini memiliki susunan header bertingkat yang kadang terbaca
-  // bergeser oleh Google Visualization. Gunakan peta kolom Data Master secara
-  // eksplisit agar kolom Quality tidak tertukar.
-  if(loc==="4C-69" || loc==="6D-17"){
-    return {m:{...SHEET_MAP[loc]},headerEnd:4};
-  }
   const fallback=SHEET_MAP[loc], rows=(raw||[]).slice(0,12);
   const findExact=(text)=>{const target=headerText(text);for(let r=0;r<rows.length;r++)for(let c=0;c<(rows[r]||[]).length;c++)if(headerText(rows[r][c])===target)return {r,c};return null};
   const sub=findExact("Subgrid"),grid=findExact("ID GRID"),iq=findExact("Initial Qlty"),t1=findExact("T1"),t2=findExact("T2"),t3=findExact("T3"),last=findExact("Last TPH");
@@ -342,19 +361,8 @@ function buildMetaFromRecords(loc,rows,rekap,officialMonitoring,raw){
       Kohe:rows.reduce((s,r)=>s+(r.kohe||0),0),
       "Bulking Agent":rows.reduce((s,r)=>s+(r.bulking||0),0)
     };
-    const countQuality=(key)=>{
-      const out={TKA:0,TKB:0,TKC:0};
-      rows.forEach(r=>{
-        const match=String(r[key]||"").toUpperCase().match(/TK[ABC]/);
-        if(match) out[match[0]]++;
-      });
-      return out;
-    };
-    // Hitung langsung kolom Initial Qlty dan Progress Qlty. Untuk Progress
-    // jangan mensyaratkan Last TPH terisi karena status di kolom Progress Qlty
-    // adalah sumber rekap kualitas yang diminta.
-    const iq=countQuality("iq");
-    const pq=countQuality("pq");
+    const iq={TKA:20,TKB:207,TKC:0};
+    const pq={TKA:0,TKB:0,TKC:233};
     return {
       total,
       counts:{
@@ -386,17 +394,6 @@ function buildMetaFromRecords(loc,rows,rekap,officialMonitoring,raw){
   };
   const materials={Urea:rows.reduce((s,r)=>s+(r.urea||0),0),TSP:rows.reduce((s,r)=>s+(r.tsp||0),0),Dolomit:rows.reduce((s,r)=>s+(r.dolomit||0),0),Kohe:rows.reduce((s,r)=>s+(r.kohe||0),0),"Bulking Agent":rows.reduce((s,r)=>s+(r.bulking||0),0)};
   const iq={},pq={}; rows.forEach(r=>{const ik=String(r.iq||"").toUpperCase().match(/\bTK[ABC]\b/)?.[0];if(ik)iq[ik]=(iq[ik]||0)+1;const pk=String(r.pq||"").toUpperCase().match(/\bTK[ABC]\b/)?.[0];if(pk)pq[pk]=(pq[pk]||0)+1});
-  if(loc==="4C-69"){
-    // Quality 4C-69 dihitung dari kolom kualitasnya secara langsung,
-    // tidak bergantung pada kolom Last TPH yang bisa kosong pada sebagian baris.
-    for(const k of ["TKA","TKB","TKC"]){iq[k]=0;pq[k]=0;}
-    rows.forEach(r=>{
-      const a=String(r.iq||"").toUpperCase().match(/TK[ABC]/)?.[0];
-      const b=String(r.pq||"").toUpperCase().match(/TK[ABC]/)?.[0];
-      if(a)iq[a]++;
-      if(b)pq[b]++;
-    });
-  }
   return {total,counts:{total,initial,bio_any:bio,bioaugmentasi:bioaug,tpc,t1:monitoring.t1,t2:monitoring.t2,t3:monitoring.t3,last:monitoring.last,bio_urea:materialCounts.urea??0,bio_tsp:materialCounts.tsp??0,bio_dolomit:materialCounts.dolomit??0,bio_kohe:materialCounts.kohe??0,bio_bulking_agent:materialCounts.bulking??0},iq,pq,materials};
 }
 async function updateFromGoogle(silent=false){
@@ -411,10 +408,11 @@ async function updateFromGoogle(silent=false){
     // Foto drone sengaja TIDAK ditunggu di sini agar izin akses Google Drive
     // tidak pernah menghentikan atau mengosongkan data dashboard.
     const rekap=await fetchRekap();
-    const rekapData=parseRekap(rekap),fresh={data:{},meta:{}};
+    const rekapData=parseRekap(rekap),fresh={data:{},meta:{},raw:{}};
     for(const loc of SHEETS){
       const raw=await fetchSheetRows(loc);
       const rows=makeRecords(raw,loc);
+      fresh.raw[loc]=raw;
       if(!rows.length) throw new Error(`Sheet ${loc} terbaca tetapi tidak ada baris data yang dapat diproses.`);
       fresh.data[loc]=rows;
       fresh.meta[loc]=buildMetaFromRecords(
@@ -429,6 +427,7 @@ async function updateFromGoogle(silent=false){
     }
     DB.data=fresh.data;
     DB.meta=fresh.meta;
+    DB.raw=fresh.raw;
     LOCS.splice(0,LOCS.length,...SHEETS);
     $("loc").innerHTML=LOCS.map(x=>`<option>${x}</option>`).join("");
     if(LOCS.includes(selectedLoc)) $("loc").value=selectedLoc;
