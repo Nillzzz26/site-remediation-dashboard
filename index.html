@@ -56,7 +56,25 @@ function render(){
     }
     return out;
   };
-  const q=qualityCountRaw("initial","iq"),p=qualityCountRaw("last","pq");
+  // Perbaikan terarah: 4C-69 dan 6D-17 memakai hasil parsing record
+  // yang sama dengan tabel detail. Pada dua sheet ini, pembacaan ulang kolom
+  // mentah dengan deteksi header dapat bergeser sehingga diagram menjadi 0.
+  // Lokasi lain tetap memakai metode raw-sheet yang sebelumnya sudah benar.
+  const q=(loc==="4C-69" || loc==="6D-17")
+    ? qualityCount(rows,"initial","iq")
+    : qualityCountRaw("initial","iq");
+  const p=(loc==="4C-69")
+    // Pada 4C-69, Progress Qlty adalah acuan langsung: seluruh 84 subgrid
+    // sudah memiliki status (TKB 15, TKC 69), meskipun Last TPH tidak terisi
+    // pada sebagian baris. Jangan mensyaratkan nilai Last TPH untuk dihitung.
+    ? rows.reduce((out,r)=>{
+        const q=String(r.pq||"").toUpperCase().trim();
+        if(q==="TKA" || q==="TKB" || q==="TKC") out[q]++;
+        return out;
+      },{TKA:0,TKB:0,TKC:0})
+    : (loc==="6D-17"
+        ? qualityCount(rows,"last","pq")
+        : qualityCountRaw("last","pq"));
   const qLabels=["TKA","TKB","TKC"],qValues=qLabels.map(k=>q[k]),pValues=qLabels.map(k=>p[k]);
   chart("qualInitial","doughnut",qLabels,qValues);
   chart("qualProgress","doughnut",qLabels,pValues);
