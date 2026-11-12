@@ -50,14 +50,15 @@ function render(){
       const row=rawRows[i]||[];
       const text=row.map(norm).join(" ").toUpperCase();
       if(/\bTOTAL\b|DATA\s*BLANK|DATABLANK/.test(text)) continue;
-      // Pada 4C-69 dan 6D-17, kolom Progress Qlty adalah sumber status
-      // progress. Jangan mensyaratkan Last TPH terisi: beberapa baris memakai
-      // formula/format yang Google Visualization kembalikan sebagai kosong,
-      // walaupun status Progress Qlty-nya sudah tercatat di Data Master.
-      // Initial Quality tetap harus memiliki nilai Initial TPH.
-      if(valueKey==="initial" && num(row[valueCol])===null) continue;
-      // Subgrid harus terisi agar baris header/footer tidak ikut dihitung.
-      if(!norm(row[sm.sub])) continue;
+      // Pertahankan aturan asli untuk tiga lokasi yang sebelumnya sudah benar.
+      // Hanya 4C-69 dan 6D-17 yang memakai Progress Qlty sebagai sumber langsung,
+      // karena nilai Last TPH pada sebagian baris tidak dikembalikan oleh GViz.
+      if(loc==="4C-69" || loc==="6D-17"){
+        if(valueKey==="initial" && num(row[valueCol])===null) continue;
+        if(!norm(row[sm.sub])) continue;
+      } else {
+        if(num(row[valueCol])===null) continue;
+      }
       const q=String(row[qualityCol]??"").toUpperCase().trim().match(/^TK[ABC]$/)?.[0];
       if(q) out[q]++;
     }
