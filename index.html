@@ -28,7 +28,7 @@ function render(){
   // Angka bawaan hanya dipakai sebelum sinkronisasi pertama selesai.
   const ENV_FALLBACK={"5C-18":473,"5B-75":78,"4C-69":84,"4D-52":191,"6D-17":233};
   c.initialEnv=c.initialEnv??(DB.synced?null:(ENV_FALLBACK[loc]??0));
-  $("kpis").innerHTML=[["Total Grid",n,"REKAP resmi"],["Initial TPH",c.initial,pct(c.initial,n)+"%"],["Last TPH",c.initial,pct(c.initial,n)+"%"],["Biostimulasi",c.bio_any,pct(c.bio_any,n)+"%"],["Bioaugmentasi",c.bioaugmentasi,pct(c.bioaugmentasi,n)+"%"],["Initial TPC",c.tpc,pct(c.tpc,n)+"%"],["Initial PH/Suhu/Kelembaban",c.initialEnv===null?"—":c.initialEnv,c.initialEnv===null?"label tidak ditemukan. REKAP: "+(window.__rekapLabels||[]).slice(0,14).join(", ")+(window.__envHeaders?.length?" | Header sheet: "+window.__envHeaders.join(", "):"")+" •":pct(c.initialEnv,n)+"%"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value">${x[1]}</div><div class="sub">${x[2]} dari Total Grid</div></div>`).join("");
+  $("kpis").innerHTML=[["Total Grid",n,"REKAP resmi"],["Initial TPH",c.initial,pct(c.initial,n)+"%"],["Last TPH",c.initial,pct(c.initial,n)+"%"],["Biostimulasi",c.bio_any,pct(c.bio_any,n)+"%"],["Bioaugmentasi",c.bioaugmentasi,pct(c.bioaugmentasi,n)+"%"],["Initial TPC",c.tpc,pct(c.tpc,n)+"%"],["Initial PH/Suhu/Kelembaban",c.initialEnv===null?"—":c.initialEnv,c.initialEnv===null?"label tidak ditemukan. REKAP: "+(window.__rekapLabels||[]).slice(0,14).join(", ")+" | Nilai REKAP: "+JSON.stringify(window.__rekapEnv?.[loc]||{})+(window.__envHeaders?.length?" | Header sheet: "+window.__envHeaders.join(", "):"")+" •":pct(c.initialEnv,n)+"%"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value">${x[1]}</div><div class="sub">${x[2]} dari Total Grid</div></div>`).join("");
   const s=[["T1",c.t1],["T2",c.t2],["T3",c.t3],["Last TPH",c.last]];
   $("stats").innerHTML=s.map(x=>`<div class="stat"><b>${x[1]}</b><span>${x[0]}<br>${pct(x[1],n)}%</span></div>`).join("");chart("tph","bar",s.map(x=>x[0]),s.map(x=>x[1]));
   // Quality TPH: hanya TKA/TKB/TKC dan hanya dihitung pada baris yang benar-benar memiliki TPH.
@@ -411,7 +411,7 @@ function countEnvFromRaw(raw){
   const found=[];
   for(let r=0;r<head.length;r++)for(let c=0;c<(head[r]||[]).length;c++){
     const t=headerText(head[r][c]);
-    if(t&&t.length<60&&/(^|[^A-Z])PH([^A-Z]|$)|SUHU|KELEMB|TEMP|MOIST/.test(t)&&!/LAST|AKHIR|FINAL/.test(t)) found.push({r,c,t});
+    if(t&&t.length<60&&/(^|[^A-Z])PH([^A-Z]|$)|SUHU|KELEMB|TEMP|MOIST|SOIL|TANAH/.test(t)&&!/LAST|AKHIR|FINAL|TPC|TPH/.test(t)) found.push({r,c,t});
   }
   window.__envHeaders=found.map(x=>x.t);
   if(!found.length) return null;
@@ -471,11 +471,12 @@ function buildMetaFromRecords(loc,rows,rekap,officialMonitoring,raw){
     for(let ri=(raw||[]).length-1;ri>=0;ri--){
       const r=raw[ri]||[];
       const vals=[4,5,11,12,13,14,15].map(i=>num(r[i]));
-      if(vals[0]!==null && vals[1]!==null && vals[0]===vals[1] && vals.slice(2).every(v=>v!==null) && vals.slice(2).every(v=>v===vals[0])){
+      if(vals[0]!==null && vals[0]>0 && vals[1]!==null && vals[0]===vals[1] && vals.slice(2).every(v=>v!==null) && vals.slice(2).every(v=>v===vals[0])){
         totalRow6d=r; break;
       }
     }
-    const totalMaterialGrid= num(totalRow6d?.[11]) ?? num(totalRow6d?.[4]) ?? 227;
+    const rowsWithMaterial6d=rows.filter(r=>[r.urea,r.tsp,r.dolomit,r.kohe,r.bulking].some(v=>v!==null)).length;
+    const totalMaterialGrid= num(totalRow6d?.[11]) ?? num(totalRow6d?.[4]) ?? (rowsWithMaterial6d||bio||227);
     const materialCounts={
       urea:num(totalRow6d?.[sm.u]) ?? totalMaterialGrid,
       tsp:num(totalRow6d?.[sm.tsp]) ?? totalMaterialGrid,
@@ -495,6 +496,7 @@ function buildMetaFromRecords(loc,rows,rekap,officialMonitoring,raw){
       counts:{
         total,
         initial,
+        initialEnv,
         bio_any:bioAny,
         bioaugmentasi:bioaug,
         tpc,
@@ -537,6 +539,7 @@ async function updateFromGoogle(silent=false){
     const rekap=await fetchRekap();
     const rekapData=parseRekap(rekap),fresh={data:{},meta:{},raw:{}};
     window.__rekapLabels=Object.keys(rekapData);
+    window.__rekapEnv={};for(const L of SHEETS){window.__rekapEnv[L]={};for(const k of Object.keys(rekapData)){if(/SOIL|SUHU|KELEMB|(^|[^A-Z])PH([^A-Z]|$)/.test(k))window.__rekapEnv[L][k]=rekapData[k][L]}}
     for(const loc of SHEETS){
       let raw;
       if(loc==="6D-17"){
