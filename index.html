@@ -43,9 +43,25 @@ function render(){
   // memiliki Initial/Last TPH tetap terhitung dan selalu mengikuti data terbaru.
   const rawRows=DB.raw?.[loc]||[];
   const qualityCountRaw=(valueKey,qualityKey)=>{
+    // 6D-17 memakai penghitung khusus berbasis isi sel (lihat countQuality6D17).
+    if(loc==="6D-17") return countQuality6D17(rawRows,rows,m,valueKey);
     const out={TKA:0,TKB:0,TKC:0}, sm=SHEET_MAP[loc];
-    const valueCol=sm[valueKey], qualityCol=sm[qualityKey];
-    const start=(detectSheetStructure(rawRows,loc).headerEnd??4)+1;
+    let valueCol=sm[valueKey], qualityCol=sm[qualityKey];
+    const detected=detectSheetStructure(rawRows,loc);
+    let start=(detected.headerEnd??4)+1;
+
+    // Khusus 4C-69: pertahankan pemetaan yang sudah berhasil diperbaiki.
+    if(loc==="4C-69" && valueKey==="last"){
+      const headerNorm=v=>headerText(v).replace(/[^A-Z0-9]/g,"");
+      for(let r=0;r<Math.min(rawRows.length,12);r++){
+        for(let c=0;c<(rawRows[r]||[]).length;c++){
+          const h=headerNorm(rawRows[r][c]);
+          if(h==="LASTTPH") valueCol=c;
+          if(h==="PROGRESSQLTY" || h==="PROGRESSQUALITY") qualityCol=c;
+        }
+      }
+    }
+
     for(let i=start;i<rawRows.length;i++){
       const row=rawRows[i]||[];
       const text=row.map(norm).join(" ").toUpperCase();
@@ -56,25 +72,7 @@ function render(){
     }
     return out;
   };
-  // Perbaikan terarah: 4C-69 dan 6D-17 memakai hasil parsing record
-  // yang sama dengan tabel detail. Pada dua sheet ini, pembacaan ulang kolom
-  // mentah dengan deteksi header dapat bergeser sehingga diagram menjadi 0.
-  // Lokasi lain tetap memakai metode raw-sheet yang sebelumnya sudah benar.
-  const q=(loc==="4C-69" || loc==="6D-17")
-    ? qualityCount(rows,"initial","iq")
-    : qualityCountRaw("initial","iq");
-  const p=(loc==="4C-69")
-    // Pada 4C-69, Progress Qlty adalah acuan langsung: seluruh 84 subgrid
-    // sudah memiliki status (TKB 15, TKC 69), meskipun Last TPH tidak terisi
-    // pada sebagian baris. Jangan mensyaratkan nilai Last TPH untuk dihitung.
-    ? rows.reduce((out,r)=>{
-        const q=String(r.pq||"").toUpperCase().trim();
-        if(q==="TKA" || q==="TKB" || q==="TKC") out[q]++;
-        return out;
-      },{TKA:0,TKB:0,TKC:0})
-    : (loc==="6D-17"
-        ? qualityCount(rows,"last","pq")
-        : qualityCountRaw("last","pq"));
+  const q=qualityCountRaw("initial","iq"),p=qualityCountRaw("last","pq");
   const qLabels=["TKA","TKB","TKC"],qValues=qLabels.map(k=>q[k]),pValues=qLabels.map(k=>p[k]);
   chart("qualInitial","doughnut",qLabels,qValues);
   chart("qualProgress","doughnut",qLabels,pValues);
@@ -99,9 +97,12 @@ function gvizRowsToArrays(payload){
   const n=cols.length||rows.reduce((m,r)=>Math.max(m,(r.c||[]).length),0);
   return rows.map(row=>Array.from({length:n},(_,i)=>{const cell=(row.c||[])[i];return cell?(cell.v!==undefined?cell.v:(cell.f!==undefined?cell.f:"")):"";}));
 }
-function fetchSheetRows(sheet){
+function fetchSheetRows(sheet,validate){
   const range="A1:AZ1000";
-  const names=sheet==="6D-17"?["6D-17","6D-17 "]:[sheet];
+  // Google Sheets TIDAK memberi error jika nama tab salah: ia diam-diam mengembalikan
+  // tab pertama. Untuk 6D-17 coba beberapa variasi penulisan nama, lalu tolak hasil
+  // yang ternyata data sheet lain (lihat validate).
+  const names=sheet==="6D-17"?["6D-17","6D-17 "," 6D-17","6D 17","6D - 17","6D17","6d-17","6D\u201317","6D\u201417","6D-17 (2)"]:[sheet];
   function attempt(sheetName){
     return new Promise((resolve,reject)=>{
       const cb="gs_cb_"+Date.now()+"_"+Math.random().toString(36).slice(2);
@@ -122,7 +123,10 @@ function fetchSheetRows(sheet){
     for(const name of names){
       try{
         const rows=await attempt(name);
-        if(rows&&rows.length>5)return rows;
+        if(rows&&rows.length>5){
+          if(!validate||validate(rows,name))return rows;
+          lastErr=new Error(`Tab "${name}" mengembalikan data sheet lain, bukan ${sheet}.`);
+        }
       }catch(e){lastErr=e}
     }
     throw lastErr||new Error(`Sheet "${sheet}" tidak dapat diakses.`);
@@ -283,6 +287,90 @@ function getOfficialMonitoringTotals(raw,m,total,initial){
     last:num(row[m.last])??0
   };
 }
+// ===== Quality TPH khusus 6D-17 =====
+// Sheet 6D-17 memuat teks header yang sama lebih dari sekali (judul, rekap, kolom
+// bantu). Pencarian kolom lewat teks header lalu mengambil kolom yang salah dan
+// membuat diagram Initial/Progress kosong. Karena itu kolom Quality dicari dari
+// ISI sel (label TKA/TKB/TKC), dan teks header hanya dipakai sebagai petunjuk.
+function qualityLabel(v){const s=norm(v).toUpperCase().replace(/\s+/g,"");return /^TK[ABC]$/.test(s)?s:null}
+function hasTphValue(v){const s=norm(v);return s!==""&&/\d/.test(s)}
+function isSummaryRow(row){return /\bTOTAL\b|DATA\s*BLANK|DATABLANK/.test((row||[]).map(norm).join(" ").toUpperCase())}
+function countQuality6D17(rawRows,rows,meta,valueKey){
+  const sm=SHEET_MAP["6D-17"], isInitial=valueKey==="initial";
+  const empty=()=>({TKA:0,TKB:0,TKC:0}), total=o=>o.TKA+o.TKB+o.TKC;
+  const raw=rawRows||[];
+  const limit=Math.min(raw.length,15);
+  const colHeader=c=>{let t="";for(let r=0;r<limit;r++)t+=" "+headerText((raw[r]||[])[c]);return t};
+  const hdrNorm=v=>headerText(v).replace(/[^A-Z0-9]/g,"");
+
+  // 1) Data mentah: cari kolom yang benar-benar berisi label TKA/TKB/TKC.
+  const colCount={};
+  raw.forEach(row=>(row||[]).forEach((v,c)=>{if(qualityLabel(v))colCount[c]=(colCount[c]||0)+1}));
+  const cols=Object.keys(colCount).map(Number).sort((a,b)=>a-b);
+  if(cols.length){
+    const max=Math.max(...cols.map(c=>colCount[c]));
+    const main=cols.filter(c=>colCount[c]>=max*0.5);
+    let iqCol=main.find(c=>/INITIAL/.test(colHeader(c)));
+    let pqCol=main.find(c=>c!==iqCol&&/PROGRESS/.test(colHeader(c)));
+    const rest=main.filter(c=>c!==iqCol&&c!==pqCol);
+    if(iqCol===undefined)iqCol=rest.shift();   // paling kiri = Initial Quality
+    if(pqCol===undefined)pqCol=rest.shift();   // berikutnya = Progress Quality
+    const qc=(isInitial?iqCol:pqCol)??(isInitial?sm.iq:sm.pq);
+
+    // Kolom nilai TPH: header terdekat di kiri kolom Quality, lalu kolom tepat di kirinya, lalu indeks bawaan.
+    const aliases=isInitial?["DATATPH","INITIALTPH"]:["LASTTPH"];
+    let hdrCol;
+    for(let r=0;r<limit;r++)for(let c=0;c<(raw[r]||[]).length;c++){
+      if(c<qc&&aliases.includes(hdrNorm(raw[r][c]))&&(hdrCol===undefined||qc-c<qc-hdrCol))hdrCol=c;
+    }
+    const valueCols=[hdrCol,qc-1,sm[valueKey]].filter((c,i,a)=>c!==undefined&&c>=0&&a.indexOf(c)===i);
+    const tally=(vc,needTph)=>{
+      const out=empty();
+      raw.forEach(row=>{
+        if(!row||isSummaryRow(row))return;
+        const q=qualityLabel(row[qc]); if(!q)return;
+        if(needTph&&!hasTphValue(row[vc]))return;
+        out[q]++;
+      });
+      return out;
+    };
+    for(const vc of valueCols){
+      const o=tally(vc,true);
+      if(total(o)>0){console.info("[6D-17 Quality]",valueKey,{kolomQuality:qc,kolomTPH:vc,hasil:o});return o}
+    }
+    const o2=tally(null,false);   // cadangan: hitung dari label saja
+    if(total(o2)>0){console.warn("[6D-17 Quality]",valueKey,"kolom TPH tidak terbaca, dihitung dari label Quality saja",o2);return o2}
+  }
+
+  // 2) Cadangan: baris hasil makeRecords (data yang sama dengan tabel detail).
+  const fromRows=empty();
+  (rows||[]).forEach(r=>{
+    const q=qualityLabel(isInitial?r.iq:r.pq);
+    if(q&&hasTphValue(isInitial?r.initial:r.last))fromRows[q]++;
+  });
+  if(total(fromRows)>0){console.warn("[6D-17 Quality]",valueKey,"memakai baris tabel",fromRows);return fromRows}
+
+  // 3) Cadangan terakhir: ringkasan meta.
+  const mm=(isInitial?meta?.iq:meta?.pq)||{};
+  return {TKA:mm.TKA||0,TKB:mm.TKB||0,TKC:mm.TKC||0};
+}
+// Total material: jumlahkan hanya baris data asli. Baris rekap di sheet (baris merah
+// berisi jumlah grid, mis. 319 di setiap kolom, atau baris total hasil SUM) tidak
+// boleh ikut dijumlahkan, kalau tidak total dashboard lebih besar dari sheet.
+function materialRows(rows){
+  const keys=["urea","tsp","dolomit","kohe","bulking"],n=(rows||[]).length;
+  // Baris jumlah grid: kelima material berupa bilangan bulat besar (>= setengah jumlah baris).
+  const isCountRow=r=>{const v=keys.map(k=>r[k]);return v.every(x=>typeof x==="number"&&Number.isInteger(x))&&Math.min(...v)>=n*0.5};
+  const list=(rows||[]).filter(r=>!isCountRow(r));
+  // Baris total hasil SUM: nilainya sama dengan jumlah semua baris lain pada >= 2 material.
+  const sums={};keys.forEach(k=>sums[k]=list.reduce((a,r)=>a+(r[k]||0),0));
+  const isSumRow=r=>keys.filter(k=>r[k]>0&&Math.abs(r[k]-(sums[k]-r[k]))<=Math.max(0.05,sums[k]*0.0005)).length>=2;
+  return list.filter(r=>!isSumRow(r));
+}
+function computeMaterials(rows){
+  const d=materialRows(rows),sum=k=>Math.round(d.reduce((a,r)=>a+(r[k]||0),0)*100)/100;
+  return {Urea:sum("urea(kg)"),TSP:sum("tsp(kg)"),Dolomit:sum("dolomit(kg)"),Kohe:sum("kohe(ton)"),"Bulking Agent":sum("bulking(m3)")};
+}
 function makeRecords(raw,loc){
   const detected=detectSheetStructure(raw,loc),m=detected.m,data=[],seen=new Set();
   for(let ri=detected.headerEnd+1;ri<(raw||[]).length;ri++){
@@ -365,13 +453,7 @@ function buildMetaFromRecords(loc,rows,rekap,officialMonitoring,raw){
     // Pada 6D-17 nilai resminya mengikuti TOTAL material (saat ini 227),
     // bukan nilai BIOSTIMULASI dari sheet REKAP yang dapat berbeda.
     const bioAny=totalMaterialGrid;
-    const materials={
-      Urea:rows.reduce((s,r)=>s+(r.urea||0),0),
-      TSP:rows.reduce((s,r)=>s+(r.tsp||0),0),
-      Dolomit:rows.reduce((s,r)=>s+(r.dolomit||0),0),
-      Kohe:rows.reduce((s,r)=>s+(r.kohe||0),0),
-      "Bulking Agent":rows.reduce((s,r)=>s+(r.bulking||0),0)
-    };
+    const materials=computeMaterials(rows);
     const iq={TKA:20,TKB:207,TKC:0};
     const pq={TKA:0,TKB:0,TKC:233};
     return {
@@ -403,7 +485,7 @@ function buildMetaFromRecords(loc,rows,rekap,officialMonitoring,raw){
     kohe:official?num(official[SHEET_MAP[loc].kohe]):countNonEmpty("kohe"),
     bulking:official?num(official[SHEET_MAP[loc].bulk]):countNonEmpty("bulking")
   };
-  const materials={Urea:rows.reduce((s,r)=>s+(r.urea||0),0),TSP:rows.reduce((s,r)=>s+(r.tsp||0),0),Dolomit:rows.reduce((s,r)=>s+(r.dolomit||0),0),Kohe:rows.reduce((s,r)=>s+(r.kohe||0),0),"Bulking Agent":rows.reduce((s,r)=>s+(r.bulking||0),0)};
+  const materials=computeMaterials(rows);
   const iq={},pq={}; rows.forEach(r=>{const ik=String(r.iq||"").toUpperCase().match(/\bTK[ABC]\b/)?.[0];if(ik)iq[ik]=(iq[ik]||0)+1;const pk=String(r.pq||"").toUpperCase().match(/\bTK[ABC]\b/)?.[0];if(pk)pq[pk]=(pq[pk]||0)+1});
   return {total,counts:{total,initial,bio_any:bio,bioaugmentasi:bioaug,tpc,t1:monitoring.t1,t2:monitoring.t2,t3:monitoring.t3,last:monitoring.last,bio_urea:materialCounts.urea??0,bio_tsp:materialCounts.tsp??0,bio_dolomit:materialCounts.dolomit??0,bio_kohe:materialCounts.kohe??0,bio_bulking_agent:materialCounts.bulking??0},iq,pq,materials};
 }
@@ -421,7 +503,27 @@ async function updateFromGoogle(silent=false){
     const rekap=await fetchRekap();
     const rekapData=parseRekap(rekap),fresh={data:{},meta:{},raw:{}};
     for(const loc of SHEETS){
-      const raw=await fetchSheetRows(loc);
+      let raw;
+      if(loc==="6D-17"){
+        const fp=r=>JSON.stringify((r||[]).slice(0,60));
+        const others=Object.entries(fresh.raw).filter(([k])=>k!==loc).map(([,r])=>fp(r));
+        const tkRows=r=>r.filter(row=>(row||[]).some(v=>qualityLabel(v))).length;
+        const maxRows=Math.ceil((rekapData?.["JUMLAH GRID"]?.[loc]||233)*1.15);
+        try{
+          raw=await fetchSheetRows(loc,(r)=>!others.includes(fp(r))&&tkRows(r)<=maxRows);
+        }catch(err){
+          // Tab 6D-17 tidak ditemukan: JANGAN pakai data sheet lain. Pakai data 6D-17 bawaan.
+          console.warn("[6D-17] Tab tidak terbaca, memakai data 6D-17 bawaan dashboard:",err.message);
+          raw=[];
+          fresh.warn6d="⚠️ Tab 6D-17 tidak ditemukan di Google Sheets (cek nama tab) – 6D-17 memakai data bawaan";
+        }
+      }else raw=await fetchSheetRows(loc);
+      if(loc==="6D-17"&&!raw.length){
+        fresh.raw[loc]=[];
+        fresh.data[loc]=DB.data[loc];
+        fresh.meta[loc]={...DB.meta[loc],materials:computeMaterials(DB.data[loc])};
+        continue;
+      }
       const rows=makeRecords(raw,loc);
       fresh.raw[loc]=raw;
       if(!rows.length) throw new Error(`Sheet ${loc} terbaca tetapi tidak ada baris data yang dapat diproses.`);
@@ -443,7 +545,7 @@ async function updateFromGoogle(silent=false){
     $("loc").innerHTML=LOCS.map(x=>`<option>${x}</option>`).join("");
     if(LOCS.includes(selectedLoc)) $("loc").value=selectedLoc;
     render();
-    status.textContent="✅ Data Google Sheets berhasil diperbarui • "+new Date().toLocaleString("id-ID");
+    status.textContent=(fresh.warn6d||"✅ Data Google Sheets berhasil diperbarui")+" • "+new Date().toLocaleString("id-ID");
     // Muat foto setelah data dashboard sudah stabil. Jika browser meminta
     // izin jaringan/Drive dan pengguna menolak, data utama tetap utuh.
     fetchDronePhotos().then(photos=>{
