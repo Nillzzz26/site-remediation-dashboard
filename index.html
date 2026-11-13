@@ -369,7 +369,7 @@ function materialRows(rows){
 }
 function computeMaterials(rows){
   const d=materialRows(rows),sum=k=>Math.round(d.reduce((a,r)=>a+(r[k]||0),0)*100)/100;
-  return {Urea:sum("urea(kg)"),TSP:sum("tsp(kg)"),Dolomit:sum("dolomit(kg)"),Kohe:sum("kohe(ton)"),"Bulking Agent":sum("bulking(m3)")};
+  return {Urea:sum("urea"),TSP:sum("tsp"),Dolomit:sum("dolomit"),Kohe:sum("kohe"),"Bulking Agent":sum("bulking")};
 }
 function makeRecords(raw,loc){
   const detected=detectSheetStructure(raw,loc),m=detected.m,data=[],seen=new Set();
