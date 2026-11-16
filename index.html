@@ -81,7 +81,7 @@ function render(){
   chart("qualProgress","doughnut",qLabels,pValues);
   function list(id,o){$(id).innerHTML=Object.entries(o).map(([k,v])=>`<div class="r"><span>${badge(k)}</span><div class="bar"><i style="width:${pct(v,n)}%"></i></div><b>${v}</b></div>`).join("")||"Tidak ada data"}
   list("iq",q);list("pq",p);
-  const b=[["Urea(kg)",c.bio_urea],["TSP(kg)",c.bio_tsp],["Dolomit(kg)",c.bio_dolomit],["Kohe(ton)",c.bio_kohe],["Bulking Agent(kg)",c.bio_bulking_agent]];
+  const b=[["Urea(kg)",c.bio_urea],["TSP(kg)",c.bio_tsp],["Dolomit(kg)",c.bio_dolomit],["Kohe(ton)",c.bio_kohe],["Bulking Agent(m3)",c.bio_bulking_agent]];
   $("biostats").innerHTML=b.map(x=>`<div class="bioitem"><b>${x[1]}</b><span>${x[0]}<br>${pct(x[1],n)}%</span></div>`).join("");
   const me=Object.entries(m.materials||{});chart("mat","bar",me.map(x=>x[0]),me.map(x=>x[1]));$("mt").innerHTML=(me.map(x=>`<b>${x[0]}</b>: ${fmt(x[1])}`).join(" • ")||"Tidak ada material")+(loc==="4C-69"&&window.__mat4c?` <span style="opacity:.6">[${window.__mat4c}]</span>`:"");
   const st=[["T1",c.t1],["T2",c.t2],["T3",c.t3],["Last TPH",c.last]];$("stages").innerHTML=st.map(x=>`<div class="r"><span>${x[0]}</span><div class="bar"><i style="width:${pct(x[1],n)}%"></i></div><b>${pct(x[1],n)}%</b></div>`).join("");
