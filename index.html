@@ -81,7 +81,7 @@ function render(){
   chart("qualProgress","doughnut",qLabels,pValues);
   function list(id,o){$(id).innerHTML=Object.entries(o).map(([k,v])=>`<div class="r"><span>${badge(k)}</span><div class="bar"><i style="width:${pct(v,n)}%"></i></div><b>${v}</b></div>`).join("")||"Tidak ada data"}
   list("iq",q);list("pq",p);
-  const b=[["Urea(kg)",c.bio_urea],["TSP(kg)",c.bio_tsp],["Dolomit(kg)",c.bio_dolomit],["Kohe(ton)",c.bio_kohe],["Bulking Agent(m3)",c.bio_bulking_agent]];
+  const b=[["Urea",c.bio_urea],["TSP",c.bio_tsp],["Dolomit",c.bio_dolomit],["Kohe",c.bio_kohe],["Bulking Agent",c.bio_bulking_agent]];
   $("biostats").innerHTML=b.map(x=>`<div class="bioitem"><b>${x[1]}</b><span>${x[0]}<br>${pct(x[1],n)}%</span></div>`).join("");
   const me=Object.entries(m.materials||{});chart("mat","bar",me.map(x=>x[0]),me.map(x=>x[1]));$("mt").innerHTML=(me.map(x=>`<b>${x[0]}</b>: ${fmt(x[1])}`).join(" • ")||"Tidak ada material")+(loc==="4C-69"&&window.__mat4c?` <span style="opacity:.6">[${window.__mat4c}]</span>`:"");
   const st=[["T1",c.t1],["T2",c.t2],["T3",c.t3],["Last TPH",c.last]];$("stages").innerHTML=st.map(x=>`<div class="r"><span>${x[0]}</span><div class="bar"><i style="width:${pct(x[1],n)}%"></i></div><b>${pct(x[1],n)}%</b></div>`).join("");
@@ -587,12 +587,16 @@ function buildMetaFromRecords(loc,rows,rekap,officialMonitoring,raw){
     bulking:official?num(official[SHEET_MAP[loc].bulk]):countNonEmpty("bulking")
   };
   let materials=computeMaterials(rows);
-  if(loc==="4C-69"){
-    const om=officialMaterials(raw,findMaterialBlockAny(raw));
-    if(om){
-      if(om.totals) materials=om.totals;
-      Object.assign(materialCounts,om.counts);
+  {
+    // Total material diambil dari baris total resmi di sheet (bukan penjumlahan ulang baris data),
+    // agar selalu sama dengan angka di spreadsheet. Lokasi selain 4C-69 hanya memakainya
+    // bila hasilnya masuk akal (selisih maks 25% dari penjumlahan baris data).
+    const om=officialMaterials(raw,loc==="4C-69"?findMaterialBlockAny(raw):findMaterialBlockByContent(raw));
+    if(om&&om.totals){
+      const ok=loc==="4C-69"||Object.keys(om.totals).every(k=>{const c=materials[k]||0;return c===0||Math.abs(om.totals[k]-c)/c<=0.25});
+      if(ok) materials=om.totals;
     }
+    if(om&&loc==="4C-69") Object.assign(materialCounts,om.counts);
   }
   const iq={},pq={}; rows.forEach(r=>{const ik=String(r.iq||"").toUpperCase().match(/\bTK[ABC]\b/)?.[0];if(ik)iq[ik]=(iq[ik]||0)+1;const pk=String(r.pq||"").toUpperCase().match(/\bTK[ABC]\b/)?.[0];if(pk)pq[pk]=(pq[pk]||0)+1});
   return {total,counts:{total,initial,initialEnv,bio_any:bio,bioaugmentasi:bioaug,tpc,t1:monitoring.t1,t2:monitoring.t2,t3:monitoring.t3,last:monitoring.last,bio_urea:materialCounts.urea??0,bio_tsp:materialCounts.tsp??0,bio_dolomit:materialCounts.dolomit??0,bio_kohe:materialCounts.kohe??0,bio_bulking_agent:materialCounts.bulking??0},iq,pq,materials};
